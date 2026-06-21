@@ -1,81 +1,119 @@
 # headroom-pi
 
-**60–95% fewer tokens for pi coding agent sessions — zero code changes.**
-
-Routes all pi traffic through [Headroom](https://github.com/chopratejas/headroom)'s
-context compression proxy, slashing API costs while preserving accuracy.
+Route all pi coding agent traffic through [Headroom](https://github.com/chopratejas/headroom)'s
+context compression proxy — **60–95% fewer tokens, zero code changes.**
 
 ```
-pi → headroom-pi wrapper → Headroom proxy (compresses) → OpenRouter/Anthropic/OpenAI
+pi → headroom-pi → Headroom proxy (:8787) → OpenRouter / Anthropic / OpenAI
+                        │
+                        ├─ SmartCrusher (JSON)
+                        ├─ CodeCompressor (AST)
+                        ├─ Kompress-base (ML text)
+                        ├─ CacheAligner (KV cache hits)
+                        └─ CCR (reversible — LLM retrieves originals)
 ```
 
-## Two ways to install
+---
 
-### Option A: Systemd service (Linux, most reliable)
+## Installation
 
 ```bash
-git clone https://github.com/chopratejas/headroom-pi.git
+git clone https://github.com/ak47-arch/headroom-pi.git
 cd headroom-pi
 ./install.sh
 ```
 
-What it does:
-- Installs Headroom as a systemd user service with `Restart=on-failure`
-- Adds a health-check timer (every 60s, alerts on failure)
-- Installs the `headroom-pi` shell wrapper → `alias pi=headroom-pi`
-- Configures pi's `models.json` to route through the proxy
+That's it. The installer:
 
-### Option B: Pi extension (cross-platform, pi-native)
+| Does | Why |
+|---|---|
+| Finds or installs `headroom` binary | One less thing to think about |
+| Installs systemd user service | Proxy always-on, auto-restart on crash |
+| Adds health-check timer (every 60s) | Catches hangs, alerts your team |
+| Installs `headroom-pi` shell wrapper | `pi` auto-starts proxy if it's down |
+| Adds shell alias `pi=headroom-pi` | Transparent — you just type `pi` |
+| Configures `~/.pi/agent/models.json` | pi sees models routed through Headroom |
+
+### Pi extension (alternative, no systemd)
+
+If you're on macOS or don't want systemd, use the pi extension instead:
 
 ```bash
-pi install npm:headroom-pi
+pi install git:github.com/ak47-arch/headroom-pi
 ```
 
-Or manually:
+The extension auto-starts Headroom when pi launches, registers it as a custom
+provider, and shows compression status in the footer.
 
-```bash
-cp extensions/headroom-pi.ts ~/.pi/agent/extensions/
-```
+---
 
-What it does:
-- Auto-starts Headroom proxy when pi starts
-- Registers Headroom as a custom provider
-- Shows compression status in pi's footer
-- Cleans up on exit
-
-## Quick test
+## Verify it works
 
 ```bash
 # 1. Check proxy is running
 headroom-pi --status
 
-# 2. See compression stats
-curl http://127.0.0.1:8787/stats | python3 -m json.tool
+# Output:
+# Proxy: running (port 8787)
+#   Version: 0.26.0
+#   Uptime: 1546.2s
 
-# 3. Launch pi with compression
+# 2. Launch pi (compression is on automatically)
 pi
 
 # In pi:
 # /model  →  select  openrouter/deepseek/deepseek-v4-flash
-# Send any prompt — then check stats again
+# Send any prompt, then check stats in another terminal:
+
+curl http://127.0.0.1:8787/stats | python3 -m json.tool
 ```
 
-## Requirements
+Look for `tokens_saved > 0` and `savings_percent > 0`. Compression kicks in when
+pi reads files, searches code, or processes tool outputs.
 
-- **Headroom** installed: `pip install headroom-ai[proxy]`
-- **pi** installed: `npm install -g @earendil-works/pi-coding-agent`
-- Python 3.10+, systemd (for Option A), Linux/macOS
+---
 
-## Upstream configuration
+## Commands
 
-| If you use... | Set `HEADROOM_UPSTREAM` to... |
+| Command | What it does |
 |---|---|
-| OpenRouter (default) | `https://openrouter.ai/api/v1` |
-| Anthropic direct | *(uses Anthropic API auto-detection)* |
-| OpenAI direct | `https://api.openai.com/v1` |
-| DeepSeek direct | `https://api.deepseek.com/v1` |
+| `headroom-pi --status` | Show proxy version, uptime, port |
+| `headroom-pi --restart` | Bounce the proxy, then launch pi |
+| `headroom-pi --stop` | Stop the proxy service |
+| `headroom-pi --no-proxy` | Launch pi without compression (escape hatch) |
+| `headroom-pi --help` | Show all options |
 
-Set via environment or in `models.json`:
+### Systemd management
+
+```bash
+systemctl --user status headroom-proxy.service   # proxy health
+systemctl --user restart headroom-proxy.service  # restart after config change
+journalctl --user -u headroom-proxy -f           # live logs
+systemctl --user list-timers                     # health-check timer
+```
+
+### Health check
+
+```bash
+headroom-health-check              # exit 0 = healthy, exit 1 = down
+curl http://127.0.0.1:8787/livez   # raw endpoint
+```
+
+---
+
+## Configuration
+
+### Upstream provider
+
+By default, Headroom routes to **OpenRouter** (`https://openrouter.ai/api/v1`).
+To change:
+
+```bash
+export HEADROOM_UPSTREAM=https://api.anthropic.com/v1
+```
+
+Or set in pi's `~/.pi/agent/models.json`:
+
 ```json
 {
   "providers": {
@@ -86,55 +124,154 @@ Set via environment or in `models.json`:
 }
 ```
 
-## Monitoring
+Replace `openrouter` with `anthropic`, `openai`, or `deepseek` depending on your
+provider.
+
+### Port
 
 ```bash
-systemctl --user status headroom-proxy    # proxy status
-journalctl --user -u headroom-proxy -f   # live logs
-headroom-pi --restart                    # bounce the proxy
-headroom-pi --stop                       # stop the proxy
-headroom-pi --no-proxy                   # run pi without compression
+export HEADROOM_PORT=8888
+./install.sh   # re-run to update
 ```
 
-For team alerting, set `HEADROOM_SLACK_WEBHOOK` to get notified when the proxy
-goes down (within ~60 seconds).
+### Team alerting
+
+Set `HEADROOM_SLACK_WEBHOOK` to get notified within 60 seconds when the proxy
+goes down:
+
+```bash
+echo 'HEADROOM_SLACK_WEBHOOK=https://hooks.slack.com/services/...' > ~/.headroom/proxy.env
+```
+
+The health-check timer posts to Slack on failure.
+
+---
 
 ## How it works
 
 ```
-┌─────────┐     ┌──────────────────┐     ┌────────────┐
-│   pi    │ ──→ │  Headroom Proxy  │ ──→ │  Upstream  │
-│         │     │  :8787/v1        │     │  LLM API   │
-└─────────┘     │                  │     └────────────┘
-                │  • SmartCrusher  │
-                │  • CodeCompressor│
-                │  • Kompress-base │
-                │  • CacheAligner  │
-                │  • CCR           │
-                └──────────────────┘
+┌──────────┐     ┌───────────────────┐     ┌──────────────┐
+│   pi     │ ──→ │  Headroom Proxy   │ ──→ │  OpenRouter   │
+│          │     │  127.0.0.1:8787   │     │  Anthropic     │
+└──────────┘     │                   │     │  OpenAI        │
+                 │  Compression:     │     │  DeepSeek      │
+                 │   • SmartCrusher  │     └──────────────┘
+                 │   • CodeCompressor│
+                 │   • Kompress-base │
+                 │   • CacheAligner  │
+                 │                   │
+                 │  Features:        │
+                 │   • CCR retrieval │
+                 │   • Cross-agent   │
+                 │     memory        │
+                 │   • Output shaper │
+                 └───────────────────┘
 ```
 
-1. pi sends prompt + tool outputs → Headroom proxy
-2. Headroom compresses (JSON, AST, ML text compression) → sends to upstream
-3. Upstream LLM responds → Headroom passes response back to pi
-4. LLM can retrieve originals via `headroom_retrieve` MCP tool
+1. **pi** sends prompts, tool outputs, file contents → Headroom proxy
+2. **Headroom** detects content type, picks the right compressor, shrinks it
+3. **Compressed content** goes to upstream LLM (lower cost, same accuracy)
+4. **LLM** responds; Headroom passes response back to pi untouched
+5. **CCR**: if the LLM needs original details, it calls `headroom_retrieve`
+
+### compression only activates on verbose content
+
+The 60–95% headline applies to large tool outputs (code search results, error
+logs, RAG chunks). System prompts and short user messages are left alone. You'll
+see the savings compound as sessions generate more tool output.
+
+---
+
+## Real-world savings (from our testing)
+
+| Session | Before | After | Saved |
+|---|---|---|---|
+| pi startup system prompt | 30,097 | 30,097 | 0% (correct — nothing to compress) |
+| File reads + model switch | 124,947 | 109,664 | **12.2%** |
+| 100 code search results | ~17,765 | ~1,408 | **~92%** (Headroom benchmark) |
+| SRE incident debugging | ~65,694 | ~5,118 | **~92%** (Headroom benchmark) |
+
+---
+
+## Uninstall
+
+```bash
+cd headroom-pi
+./uninstall.sh
+```
+
+Removes systemd units, scripts, and shell alias. Does **not** remove the
+headroom binary or your pi models.json (review those manually).
+
+---
+
+## Requirements
+
+- **Headroom**: `pip install headroom-ai[proxy]` (installer does this automatically)
+- **pi**: `npm install -g @earendil-works/pi-coding-agent`
+- **systemd**: for the service/timer approach (Linux). Use the pi extension on macOS
+- Python 3.10+
+
+---
 
 ## Files
 
 ```
 headroom-pi/
-├── install.sh              # Option A: one-command installer
+├── README.md
+├── LICENSE                 # Apache 2.0
+├── install.sh              # One-command installer
 ├── uninstall.sh            # Clean removal
-├── systemd/                # Systemd service + timer units
-├── scripts/                # headroom-pi wrapper + health-check
-├── extensions/             # Option B: pi TypeScript extension
+├── systemd/                # Systemd units
+│   ├── headroom-proxy.service
+│   ├── headroom-health-check.service
+│   └── headroom-health-check.timer
+├── scripts/                # Shell tools
+│   ├── headroom-pi         # Wrapper (auto-start, status, restart)
+│   └── headroom-health-check
+├── extensions/             # Pi extension (TypeScript)
 │   └── headroom-pi.ts
-├── skills/                 # Pi skill for /skill:headroom
-│   └── headroom/SKILL.md
-├── package.json            # npm pi-package manifest
-└── README.md
+└── skills/                 # Pi skill
+    └── headroom/SKILL.md
+```
+
+## Troubleshooting
+
+**`headroom: command not found`**
+
+The installer should catch this. If not:
+```bash
+pip install headroom-ai[proxy]
+```
+
+**401 / authentication error**
+
+Make sure you've authenticated in pi (`/login openrouter` or set your API key).
+The proxy forwards credentials from pi to the upstream.
+
+**Proxy starts but no compression**
+
+Check compression is working:
+```bash
+curl http://127.0.0.1:8787/stats | grep tokens_saved
+```
+If zero, you might be sending small requests. Send a prompt that reads a large
+file — that's where compression kicks in.
+
+**Port 8787 already in use**
+
+```bash
+export HEADROOM_PORT=8888
+./install.sh
+```
+
+**Proxy crashes**
+
+systemd auto-restarts it in ~2 seconds. Check:
+```bash
+journalctl --user -u headroom-proxy --since "5 min ago"
 ```
 
 ## License
 
-Apache 2.0 — same as Headroom.
+Apache 2.0 — same as [Headroom](https://github.com/chopratejas/headroom). See [LICENSE](LICENSE).
