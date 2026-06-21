@@ -1,0 +1,9 @@
+[Unit]
+Description=Headroom proxy health check
+BindsTo=headroom-proxy.service
+
+[Service]
+Type=oneshot
+ExecStart={SCRIPTS_DIR}/headroom-health-check
+StandardOutput=journal
+StandardError=journal

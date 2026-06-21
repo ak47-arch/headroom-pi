@@ -1,0 +1,29 @@
+#!/bin/bash
+# headroom-health-check — probes /livez, alerts on failure
+# Part of headroom-pi integration
+set -euo pipefail
+
+HEADROOM_PORT="${HEADROOM_PORT:-8787}"
+HEALTH_URL="http://127.0.0.1:${HEADROOM_PORT}/livez"
+SLACK_WEBHOOK="${HEADROOM_SLACK_WEBHOOK:-}"
+
+if curl -sf "$HEALTH_URL" > /dev/null 2>&1; then
+    exit 0
+fi
+
+logger -p daemon.err -t headroom-health-check \
+    "Headroom proxy unreachable at ${HEALTH_URL}"
+
+if command -v notify-send &>/dev/null; then
+    notify-send -u critical \
+        "Headroom Proxy Down" \
+        "http://127.0.0.1:${HEADROOM_PORT} not responding" 2>/dev/null || true
+fi
+
+if [ -n "$SLACK_WEBHOOK" ]; then
+    curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"text\":\"🚨 Headroom proxy DOWN on $(hostname) — port ${HEADROOM_PORT} not responding\"}" \
+        "$SLACK_WEBHOOK" 2>/dev/null || true
+fi
+
+exit 1

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Headroom health check every minute
+Requires=headroom-health-check.service
+
+[Timer]
+OnCalendar=minutely
+Persistent=true
+
+[Install]
+WantedBy=default.target

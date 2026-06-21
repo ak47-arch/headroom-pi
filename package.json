@@ -1,0 +1,13 @@
+{
+  "name": "headroom-pi",
+  "version": "0.1.0",
+  "description": "Headroom context compression for pi — 60-95% fewer tokens, transparent proxy integration",
+  "keywords": ["pi-package", "headroom", "context-compression", "llm", "token-savings"],
+  "author": "chopratejas",
+  "license": "Apache-2.0",
+  "repository": "github:chopratejas/headroom-pi",
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  }
+}

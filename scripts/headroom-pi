@@ -1,0 +1,107 @@
+#!/bin/bash
+# headroom-pi — launch pi with Headroom proxy automatically managed
+# Usage:
+#   headroom-pi [pi args...]        — ensure proxy is running, then exec pi
+#   headroom-pi --status            — print proxy status
+#   headroom-pi --restart           — restart proxy, then run pi
+#   headroom-pi --no-proxy [args]   — skip proxy check, exec pi directly
+#   headroom-pi --stop              — stop the proxy service
+#   headroom-pi --help              — show this message
+
+set -euo pipefail
+
+HEADROOM_PORT="${HEADROOM_PORT:-8787}"
+SERVICE_NAME="headroom-proxy.service"
+POLL_TIMEOUT=10
+
+# Resolve pi binary
+PI_BIN=""
+for candidate in "$HOME/.npm-global/bin/pi" /usr/bin/pi /usr/local/bin/pi; do
+    if [ -x "$candidate" ] && [ "$(basename "$candidate")" = "pi" ]; then
+        PI_BIN="$candidate"
+        break
+    fi
+done
+if [ -z "$PI_BIN" ]; then
+    PI_BIN="$(command -v pi 2>/dev/null || true)"
+fi
+if [ -z "$PI_BIN" ] || [ ! -x "$PI_BIN" ]; then
+    echo "Error: pi binary not found." >&2
+    echo "  npm install -g @earendil-works/pi-coding-agent" >&2
+    exit 1
+fi
+
+pi_status() {
+    systemctl --user is-active "$SERVICE_NAME" 2>/dev/null || echo "inactive"
+}
+
+wait_for_proxy() {
+    local waited=0
+    while [ "$waited" -lt "$POLL_TIMEOUT" ]; do
+        if curl -sf "http://127.0.0.1:${HEADROOM_PORT}/livez" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    return 1
+}
+
+case "${1:-}" in
+    --status)
+        status="$(pi_status)"
+        if [ "$status" = "active" ]; then
+            echo "Proxy: running (port ${HEADROOM_PORT})"
+            curl -sf "http://127.0.0.1:${HEADROOM_PORT}/livez" 2>/dev/null | \
+                python3 -c "import sys,json; d=json.load(sys.stdin); print(f'  Version: {d[\"version\"]}\n  Uptime: {d[\"uptime_seconds\"]}s')" 2>/dev/null || true
+        else
+            echo "Proxy: not running"
+        fi
+        exit 0
+        ;;
+    --restart)
+        echo "Restarting Headroom proxy..."
+        systemctl --user restart "$SERVICE_NAME" 2>/dev/null || true
+        if wait_for_proxy; then
+            echo "Proxy is up."
+        else
+            echo "Warning: proxy not responding after restart." >&2
+        fi
+        shift
+        exec "$PI_BIN" "$@"
+        ;;
+    --no-proxy)
+        shift
+        exec "$PI_BIN" "$@"
+        ;;
+    --stop)
+        echo "Stopping Headroom proxy..."
+        systemctl --user stop "$SERVICE_NAME" 2>/dev/null || true
+        echo "Done."
+        exit 0
+        ;;
+    --help|-h|help)
+        sed -n '3,9p' "$0"
+        exit 0
+        ;;
+esac
+
+status="$(pi_status)"
+case "$status" in
+    active)
+        ;;
+    activating)
+        echo "Headroom proxy is starting up... waiting." >&2
+        wait_for_proxy || echo "Warning: proxy not ready. Continuing without compression." >&2
+        ;;
+    inactive|failed)
+        echo "Starting Headroom proxy..." >&2
+        systemctl --user start "$SERVICE_NAME" 2>/dev/null || {
+            echo "Error: failed to start Headroom proxy." >&2
+            exec "$PI_BIN" "$@"
+        }
+        wait_for_proxy || echo "Warning: proxy not responding. Continuing without compression." >&2
+        ;;
+esac
+
+exec "$PI_BIN" "$@"

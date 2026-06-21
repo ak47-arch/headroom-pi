@@ -1,0 +1,16 @@
+[Unit]
+Description=Headroom Context Compression Proxy
+Documentation=https://headroom-docs.vercel.app/docs
+
+[Service]
+Type=simple
+ExecStart={HEADROOM_BIN} proxy --port {HEADROOM_PORT}
+Restart=on-failure
+RestartSec=2
+Environment=HEADROOM_PORT={HEADROOM_PORT}
+Environment=OPENAI_TARGET_API_URL={HEADROOM_UPSTREAM_URL}
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
